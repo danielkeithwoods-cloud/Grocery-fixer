@@ -48,15 +48,26 @@ async def health():
 
 @app.get("/api/test-kroger")
 async def test_kroger():
-    client_id = os.getenv("KROGER_CLIENT_ID", "")
-    client_secret = os.getenv("KROGER_CLIENT_SECRET", "")
+    import base64
+    import httpx
+    client_id = os.getenv("KROGER_CLIENT_ID", "").strip()
+    client_secret = os.getenv("KROGER_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
         return {"status": "no_credentials", "detail": "KROGER_CLIENT_ID or KROGER_CLIENT_SECRET not set in .env"}
-    try:
-        token = await _get_access_token(client_id, client_secret)
-        return {"status": "ok", "token_prefix": token[:20] + "..."}
-    except Exception as e:
-        return {"status": "error", "detail": str(e), "client_id_length": len(client_id), "secret_length": len(client_secret)}
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.kroger.com/v1/connect/oauth2/token",
+            headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "client_credentials"},
+        )
+    return {
+        "status": "ok" if resp.status_code == 200 else "error",
+        "http_status": resp.status_code,
+        "kroger_response": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text,
+        "client_id_length": len(client_id),
+        "secret_length": len(client_secret),
+    }
 
 
 @app.post("/api/stores")

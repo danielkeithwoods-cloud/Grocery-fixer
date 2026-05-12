@@ -44,6 +44,8 @@ async def _get_access_token(client_id: str, client_secret: str) -> str:
     if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
 
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     async with httpx.AsyncClient() as client:
         resp = await client.post(
