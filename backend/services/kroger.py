@@ -49,7 +49,7 @@ async def _get_access_token(client_id: str, client_secret: str) -> str:
         resp = await client.post(
             KROGER_TOKEN_URL,
             headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"},
-            data={"grant_type": "client_credentials", "scope": "product.compact"},
+            data={"grant_type": "client_credentials"},
         )
         resp.raise_for_status()
         data = resp.json()
