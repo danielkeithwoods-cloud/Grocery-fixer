@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from services.kroger import search_stores, get_deals
+from services.kroger import search_stores, get_deals, _get_access_token
 from services.recipe import generate_recipe_plan
 
 app = FastAPI(title="Grocery Recipe Optimizer", version="1.0.0")
@@ -44,6 +44,19 @@ class RecipePlanRequest(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/test-kroger")
+async def test_kroger():
+    client_id = os.getenv("KROGER_CLIENT_ID", "")
+    client_secret = os.getenv("KROGER_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return {"status": "no_credentials", "detail": "KROGER_CLIENT_ID or KROGER_CLIENT_SECRET not set in .env"}
+    try:
+        token = await _get_access_token(client_id, client_secret)
+        return {"status": "ok", "token_prefix": token[:20] + "..."}
+    except Exception as e:
+        return {"status": "error", "detail": str(e), "client_id_length": len(client_id), "secret_length": len(client_secret)}
 
 
 @app.post("/api/stores")

@@ -68,7 +68,10 @@ async def search_stores(zip_code: str, radius_miles: int = 10) -> list[dict]:
 
     client_id = os.getenv("KROGER_CLIENT_ID")
     client_secret = os.getenv("KROGER_CLIENT_SECRET")
-    token = await _get_access_token(client_id, client_secret)
+    try:
+        token = await _get_access_token(client_id, client_secret)
+    except Exception:
+        return DEMO_STORES
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -101,7 +104,10 @@ async def get_deals(store_id: str, limit: int = 50) -> list[dict]:
 
     client_id = os.getenv("KROGER_CLIENT_ID")
     client_secret = os.getenv("KROGER_CLIENT_SECRET")
-    token = await _get_access_token(client_id, client_secret)
+    try:
+        token = await _get_access_token(client_id, client_secret)
+    except Exception:
+        return DEMO_DEALS
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
