@@ -3,11 +3,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from services.kroger import search_stores, get_deals, _get_access_token
+from services.kroger import (
+    search_stores, get_deals, get_auth_url, exchange_code_for_token,
+    store_user_token, get_user_session, clear_user_session, _get_app_token,
+)
 from services.recipe import generate_recipe_plan
 
 app = FastAPI(title="Grocery Recipe Optimizer", version="1.0.0")
@@ -29,6 +33,7 @@ class StoreSearchRequest(BaseModel):
 class DealsRequest(BaseModel):
     store_id: str
     limit: int = Field(default=50, ge=10, le=100)
+    session_id: str | None = None
 
 
 class RecipePlanRequest(BaseModel):
@@ -39,6 +44,7 @@ class RecipePlanRequest(BaseModel):
     meat_preference: str = Field(default="any")
     budget_per_person_per_day: float = Field(default=8.0, ge=1.0, le=50.0)
     meals_per_day: int = Field(default=3, ge=1, le=3)
+    session_id: str | None = None
 
 
 @app.get("/health")
@@ -48,12 +54,11 @@ async def health():
 
 @app.get("/api/test-kroger")
 async def test_kroger():
-    import base64
-    import httpx
+    import base64, httpx
     client_id = os.getenv("KROGER_CLIENT_ID", "").strip()
     client_secret = os.getenv("KROGER_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
-        return {"status": "no_credentials", "detail": "KROGER_CLIENT_ID or KROGER_CLIENT_SECRET not set in .env"}
+        return {"status": "no_credentials"}
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -64,11 +69,48 @@ async def test_kroger():
     return {
         "status": "ok" if resp.status_code == 200 else "error",
         "http_status": resp.status_code,
-        "kroger_response": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text,
+        "kroger_response": resp.json() if "json" in resp.headers.get("content-type", "") else resp.text,
         "client_id_length": len(client_id),
         "secret_length": len(client_secret),
     }
 
+
+# --- Kroger OAuth endpoints ---
+
+@app.get("/api/kroger/login")
+async def kroger_login(session_id: str = Query(...)):
+    if not os.getenv("KROGER_CLIENT_ID"):
+        raise HTTPException(status_code=503, detail="Kroger credentials not configured")
+    return {"auth_url": get_auth_url(session_id)}
+
+
+@app.get("/api/kroger/callback")
+async def kroger_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
+    if error:
+        return RedirectResponse(url=f"http://localhost:5173?kroger_error={error}")
+    if not code or not state:
+        return RedirectResponse(url="http://localhost:5173?kroger_error=missing_params")
+    try:
+        token_data = await exchange_code_for_token(code)
+        store_user_token(state, token_data)
+        return RedirectResponse(url=f"http://localhost:5173?kroger_connected=true&session_id={state}")
+    except Exception as e:
+        return RedirectResponse(url=f"http://localhost:5173?kroger_error=token_exchange_failed")
+
+
+@app.get("/api/kroger/status")
+async def kroger_status(session_id: str = Query(...)):
+    session = get_user_session(session_id)
+    return {"connected": session is not None}
+
+
+@app.post("/api/kroger/logout")
+async def kroger_logout(session_id: str = Query(...)):
+    clear_user_session(session_id)
+    return {"status": "logged_out"}
+
+
+# --- Main app endpoints ---
 
 @app.post("/api/stores")
 async def find_stores(req: StoreSearchRequest):
@@ -82,12 +124,14 @@ async def find_stores(req: StoreSearchRequest):
 @app.post("/api/deals")
 async def fetch_deals(req: DealsRequest):
     try:
-        deals = await get_deals(req.store_id, req.limit)
+        deals = await get_deals(req.store_id, req.limit, session_id=req.session_id)
         on_sale_count = sum(1 for d in deals if d.get("on_sale"))
+        coupon_count = sum(1 for d in deals if d.get("has_coupon"))
         return {
             "deals": deals,
             "total": len(deals),
             "on_sale_count": on_sale_count,
+            "coupon_count": coupon_count,
             "demo_mode": not bool(os.getenv("KROGER_CLIENT_ID")),
         }
     except Exception as e:
@@ -97,12 +141,9 @@ async def fetch_deals(req: DealsRequest):
 @app.post("/api/generate-plan")
 async def generate_plan(req: RecipePlanRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY not configured. Add it to backend/.env to enable recipe generation.",
-        )
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured.")
 
-    deals = await get_deals(req.store_id, limit=50)
+    deals = await get_deals(req.store_id, limit=50, session_id=req.session_id)
 
     try:
         plan = await generate_recipe_plan(

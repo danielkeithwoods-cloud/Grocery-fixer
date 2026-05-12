@@ -14,9 +14,10 @@ function categoryColor(cat) {
   return CATEGORY_COLORS[cat] || CATEGORY_COLORS['default']
 }
 
-export default function DealsPanel({ deals, loading, onRefresh, demoMode }) {
+export default function DealsPanel({ deals, loading, onRefresh, demoMode, krogerConnected }) {
   const onSale = deals.filter(d => d.on_sale)
   const regular = deals.filter(d => !d.on_sale)
+  const couponItems = deals.filter(d => d.has_coupon)
   const totalSavings = onSale.reduce((sum, d) => sum + (d.savings || 0), 0)
 
   if (loading) {
@@ -57,15 +58,21 @@ export default function DealsPanel({ deals, loading, onRefresh, demoMode }) {
       )}
 
       {/* Stats bar */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      <div className={`grid gap-3 mb-5 ${krogerConnected ? 'grid-cols-4' : 'grid-cols-3'}`}>
         <div className="bg-green-50 rounded-lg p-3 text-center">
           <div className="text-2xl font-bold text-green-700">{onSale.length}</div>
           <div className="text-xs text-green-600">Items on Sale</div>
         </div>
         <div className="bg-red-50 rounded-lg p-3 text-center">
           <div className="text-2xl font-bold text-red-600">${totalSavings.toFixed(2)}</div>
-          <div className="text-xs text-red-500">Total Savings Available</div>
+          <div className="text-xs text-red-500">Total Savings</div>
         </div>
+        {krogerConnected && (
+          <div className="bg-purple-50 rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-purple-700">{couponItems.length}</div>
+            <div className="text-xs text-purple-600">Digital Coupons</div>
+          </div>
+        )}
         <div className="bg-blue-50 rounded-lg p-3 text-center">
           <div className="text-2xl font-bold text-blue-700">{deals.length}</div>
           <div className="text-xs text-blue-600">Total Products</div>
@@ -104,8 +111,13 @@ export default function DealsPanel({ deals, loading, onRefresh, demoMode }) {
 
 function DealCard({ deal }) {
   const catClass = categoryColor(deal.category)
+  const borderClass = deal.has_coupon
+    ? 'border-purple-200 bg-purple-50/30'
+    : deal.on_sale
+    ? 'border-green-200 bg-green-50/30'
+    : 'border-gray-100 bg-gray-50/30'
   return (
-    <div className={`flex items-start gap-3 p-3 rounded-lg border ${deal.on_sale ? 'border-green-200 bg-green-50/30' : 'border-gray-100 bg-gray-50/30'}`}>
+    <div className={`flex items-start gap-3 p-3 rounded-lg border ${borderClass}`}>
       <div className="flex-1 min-w-0">
         <div className="font-medium text-sm text-gray-800 truncate">{deal.name}</div>
         {deal.brand && <div className="text-xs text-gray-500">{deal.brand}</div>}
@@ -119,7 +131,10 @@ function DealCard({ deal }) {
         {deal.on_sale && (
           <>
             <div className="text-xs text-gray-400 line-through">${deal.regular_price.toFixed(2)}</div>
-            <div className="badge-sale">Save ${deal.savings.toFixed(2)}</div>
+            {deal.has_coupon
+              ? <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-700 text-xs font-semibold px-2 py-0.5 rounded-full">Coupon -${deal.savings.toFixed(2)}</span>
+              : <div className="badge-sale">Save ${deal.savings.toFixed(2)}</div>
+            }
           </>
         )}
       </div>

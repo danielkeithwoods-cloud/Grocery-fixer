@@ -17,8 +17,8 @@ export const api = {
   findStores: (zipCode, radiusMiles = 10) =>
     post('/stores', { zip_code: zipCode, radius_miles: radiusMiles }),
 
-  fetchDeals: (storeId, limit = 50) =>
-    post('/deals', { store_id: storeId, limit }),
+  fetchDeals: (storeId, sessionId = null, limit = 50) =>
+    post('/deals', { store_id: storeId, limit, session_id: sessionId }),
 
   generatePlan: (params) => post('/generate-plan', params),
 }

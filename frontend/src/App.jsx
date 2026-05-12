@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ShoppingBasket, Sparkles, AlertCircle } from 'lucide-react'
 import StoreSelector from './components/StoreSelector'
 import PreferencesForm from './components/PreferencesForm'
 import DealsPanel from './components/DealsPanel'
 import RecipePlan from './components/RecipePlan'
 import GroceryList from './components/GroceryList'
+import KrogerAuth from './components/KrogerAuth'
 import { api } from './services/api'
 
 const DEFAULT_PREFS = {
@@ -18,8 +19,20 @@ const DEFAULT_PREFS = {
 
 const STEPS = ['store', 'preferences', 'plan']
 
+function getOrCreateSessionId() {
+  let id = localStorage.getItem('kroger_session_id')
+  if (!id) {
+    id = crypto.randomUUID()
+    localStorage.setItem('kroger_session_id', id)
+  }
+  return id
+}
+
 export default function App() {
-  const [step, setStep] = useState('store') // store | preferences | plan
+  const [sessionId] = useState(getOrCreateSessionId)
+  const [krogerConnected, setKrogerConnected] = useState(false)
+
+  const [step, setStep] = useState('store')
   const [selectedStore, setSelectedStore] = useState(null)
   const [prefs, setPrefs] = useState(DEFAULT_PREFS)
 
@@ -31,14 +44,25 @@ export default function App() {
   const [planLoading, setPlanLoading] = useState(false)
   const [planError, setPlanError] = useState(null)
 
-  async function handleStoreSelected(store) {
-    setSelectedStore(store)
-    setDeals([])
-    setPlan(null)
-    setPlanError(null)
+  // Handle OAuth redirect back from Kroger
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('kroger_connected') === 'true') {
+      setKrogerConnected(true)
+      window.history.replaceState({}, '', '/')
+      // Re-fetch deals with new user token if a store is already selected
+      if (selectedStore) loadDeals(selectedStore, true)
+    }
+    if (params.get('kroger_error')) {
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
+
+  async function loadDeals(store, withCoupons = false) {
     setDealsLoading(true)
     try {
-      const res = await api.fetchDeals(store.id)
+      const sid = (krogerConnected || withCoupons) ? sessionId : null
+      const res = await api.fetchDeals(store.id, sid)
       setDeals(res.deals)
       setDealsDemoMode(res.demo_mode)
     } catch (e) {
@@ -46,20 +70,25 @@ export default function App() {
     } finally {
       setDealsLoading(false)
     }
+  }
+
+  async function handleStoreSelected(store) {
+    setSelectedStore(store)
+    setDeals([])
+    setPlan(null)
+    setPlanError(null)
+    await loadDeals(store)
     setStep('preferences')
   }
 
   async function handleRefreshDeals() {
-    if (!selectedStore) return
-    setDealsLoading(true)
-    try {
-      const res = await api.fetchDeals(selectedStore.id)
-      setDeals(res.deals)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setDealsLoading(false)
-    }
+    if (selectedStore) await loadDeals(selectedStore)
+  }
+
+  // Re-fetch deals when Kroger account is connected/disconnected
+  async function handleKrogerStatusChange(connected) {
+    setKrogerConnected(connected)
+    if (selectedStore) await loadDeals(selectedStore, connected)
   }
 
   async function handleGeneratePlan() {
@@ -69,7 +98,11 @@ export default function App() {
     setPlanLoading(true)
     setStep('plan')
     try {
-      const result = await api.generatePlan({ store_id: selectedStore.id, ...prefs })
+      const result = await api.generatePlan({
+        store_id: selectedStore.id,
+        session_id: krogerConnected ? sessionId : null,
+        ...prefs,
+      })
       setPlan(result)
     } catch (e) {
       setPlanError(e.message)
@@ -134,6 +167,12 @@ export default function App() {
         {/* Step 2: Preferences + Deals */}
         {step === 'preferences' && (
           <>
+            {/* Kroger account connection banner */}
+            <KrogerAuth
+              sessionId={sessionId}
+              onStatusChange={handleKrogerStatusChange}
+            />
+
             <PreferencesForm prefs={prefs} onChange={setPrefs} />
 
             <DealsPanel
@@ -141,6 +180,7 @@ export default function App() {
               loading={dealsLoading}
               onRefresh={handleRefreshDeals}
               demoMode={dealsDemoMode}
+              krogerConnected={krogerConnected}
             />
 
             <div className="flex justify-between items-center">
