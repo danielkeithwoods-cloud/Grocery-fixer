@@ -100,6 +100,11 @@ async def search_stores(zip_code: str, radius_miles: int = 10) -> list[dict]:
     return stores
 
 
+SEARCH_TERMS = ["chicken", "beef", "pork", "salmon", "eggs", "milk", "cheese",
+                "broccoli", "potato", "spinach", "tomato", "onion",
+                "rice", "pasta", "bread", "oats", "beans", "yogurt", "olive oil"]
+
+
 async def get_deals(store_id: str, limit: int = 50) -> list[dict]:
     if not _has_kroger_credentials():
         return DEMO_DEALS
@@ -111,22 +116,39 @@ async def get_deals(store_id: str, limit: int = 50) -> list[dict]:
     except Exception:
         return DEMO_DEALS
 
+    seen_ids: set[str] = set()
+    raw_products = []
+    per_term = max(5, limit // len(SEARCH_TERMS) + 1)
+
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{KROGER_BASE}/products",
-            headers={"Authorization": f"Bearer {token}"},
-            params={
-                "filter.locationId": store_id,
-                "filter.limit": limit,
-                "filter.start": 1,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        for term in SEARCH_TERMS:
+            if len(raw_products) >= limit:
+                break
+            try:
+                resp = await client.get(
+                    f"{KROGER_BASE}/products",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={
+                        "filter.term": term,
+                        "filter.locationId": store_id,
+                        "filter.limit": per_term,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    for p in resp.json().get("data", []):
+                        pid = p.get("productId")
+                        if pid and pid not in seen_ids:
+                            seen_ids.add(pid)
+                            raw_products.append(p)
+            except Exception:
+                continue
+
+    if not raw_products:
+        return DEMO_DEALS
 
     deals = []
-    for product in data.get("data", []):
+    for product in raw_products:
         items = product.get("items", [{}])
         item = items[0] if items else {}
         price_info = item.get("price", {})
