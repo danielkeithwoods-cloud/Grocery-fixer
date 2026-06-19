@@ -4,12 +4,15 @@ Scan live grocery store deals and let Claude AI build an optimized weekly meal p
 
 ## Features
 
-- **Store & deal scanning** — searches nearby Kroger-family stores (Kroger, Fred Meyer, Ralphs, etc.) and fetches current sale prices via the Kroger API
+- **Store-wide deal scanning** — searches nearby Kroger-family stores (Kroger, Fred Meyer, Ralphs, etc.) and scans ~80 categories across the whole store (meat, produce, dairy, grains, snacks, frozen, beverages, pantry) via the Kroger API, fetched concurrently and cached
+- **Browsable deals view** — filter by category, search by name/brand, sort by savings or price, and toggle "sale only"
 - **Smart recipe generation** — Claude AI builds day-by-day meal plans that maximize use of sale items to keep costs low
-- **User preferences** — set number of people, days, meals per day, macro profile (balanced, high-protein, low-carb, keto), and meat preference (chicken, beef, pork, fish, vegetarian, vegan)
-- **Budget control** — specify a budget per person per day; Claude targets recipes within it
-- **Interactive grocery list** — consolidated shopping list grouped by category, with check-off and download-to-text support
-- **Demo mode** — runs with realistic sample data if no API keys are configured
+- **Macro-targeted snack carts** — pick a preset focus (high-protein, low-carb, low-sugar, low-calorie, high-energy, balanced) *or* set custom per-serving targets, and Claude assembles a cost-optimized snack cart from current deals
+- **Digital coupons** — connect your Kroger account (OAuth) to fold your clipped digital coupons into deal pricing
+- **User preferences** — set number of people, days, meals per day, macro profile, and meat preference (chicken, beef, pork, fish, vegetarian, vegan)
+- **Budget control** — specify a budget per person per day for meals, or a total budget for snack carts
+- **Interactive lists** — consolidated grocery list and snack cart, grouped, with check-off and download-to-text
+- **Demo mode** — runs with realistic sample data (including snacks) if no API keys are configured
 
 ## Setup
 

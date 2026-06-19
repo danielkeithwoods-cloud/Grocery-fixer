@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { ShoppingBasket, Sparkles, AlertCircle } from 'lucide-react'
+import { ShoppingBasket, Sparkles, AlertCircle, Tag, ChefHat, Cookie, Store } from 'lucide-react'
 import StoreSelector from './components/StoreSelector'
 import PreferencesForm from './components/PreferencesForm'
-import DealsPanel from './components/DealsPanel'
+import DealsBrowser from './components/DealsBrowser'
 import RecipePlan from './components/RecipePlan'
 import GroceryList from './components/GroceryList'
+import SnackCartBuilder from './components/SnackCartBuilder'
 import KrogerAuth from './components/KrogerAuth'
 import { api } from './services/api'
 
@@ -17,8 +18,6 @@ const DEFAULT_PREFS = {
   meals_per_day: 3,
 }
 
-const STEPS = ['store', 'preferences', 'plan']
-
 function getOrCreateSessionId() {
   let id = localStorage.getItem('kroger_session_id')
   if (!id) {
@@ -28,11 +27,18 @@ function getOrCreateSessionId() {
   return id
 }
 
+const TABS = [
+  { key: 'deals', label: 'All Deals', icon: Tag },
+  { key: 'meals', label: 'Meal Plan', icon: ChefHat },
+  { key: 'snacks', label: 'Snack Carts', icon: Cookie },
+]
+
 export default function App() {
   const [sessionId] = useState(getOrCreateSessionId)
   const [krogerConnected, setKrogerConnected] = useState(false)
 
-  const [step, setStep] = useState('store')
+  const [view, setView] = useState('store') // 'store' | 'workspace'
+  const [activeTab, setActiveTab] = useState('deals')
   const [selectedStore, setSelectedStore] = useState(null)
   const [prefs, setPrefs] = useState(DEFAULT_PREFS)
 
@@ -44,17 +50,28 @@ export default function App() {
   const [planLoading, setPlanLoading] = useState(false)
   const [planError, setPlanError] = useState(null)
 
-  // Handle OAuth redirect back from Kroger
+  // On mount: handle OAuth redirect + restore previously selected store
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    let connected = false
     if (params.get('kroger_connected') === 'true') {
+      connected = true
       setKrogerConnected(true)
-      window.history.replaceState({}, '', '/')
-      // Re-fetch deals with new user token if a store is already selected
-      if (selectedStore) loadDeals(selectedStore, true)
     }
-    if (params.get('kroger_error')) {
+    if (params.get('kroger_connected') || params.get('kroger_error')) {
       window.history.replaceState({}, '', '/')
+    }
+
+    const stored = localStorage.getItem('selected_store')
+    if (stored) {
+      try {
+        const store = JSON.parse(stored)
+        setSelectedStore(store)
+        setView('workspace')
+        loadDeals(store, connected)
+      } catch {
+        localStorage.removeItem('selected_store')
+      }
     }
   }, [])
 
@@ -72,20 +89,28 @@ export default function App() {
     }
   }
 
-  async function handleStoreSelected(store) {
+  function handleStoreSelected(store) {
     setSelectedStore(store)
-    setDeals([])
+    localStorage.setItem('selected_store', JSON.stringify(store))
     setPlan(null)
     setPlanError(null)
-    await loadDeals(store)
-    setStep('preferences')
+    setView('workspace')
+    setActiveTab('deals')
+    loadDeals(store)
+  }
+
+  function handleChangeStore() {
+    localStorage.removeItem('selected_store')
+    setSelectedStore(null)
+    setDeals([])
+    setPlan(null)
+    setView('store')
   }
 
   async function handleRefreshDeals() {
     if (selectedStore) await loadDeals(selectedStore)
   }
 
-  // Re-fetch deals when Kroger account is connected/disconnected
   async function handleKrogerStatusChange(connected) {
     setKrogerConnected(connected)
     if (selectedStore) await loadDeals(selectedStore, connected)
@@ -96,7 +121,6 @@ export default function App() {
     setPlan(null)
     setPlanError(null)
     setPlanLoading(true)
-    setStep('plan')
     try {
       const result = await api.generatePlan({
         store_id: selectedStore.id,
@@ -111,8 +135,6 @@ export default function App() {
     }
   }
 
-  const stepIndex = STEPS.indexOf(step)
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-gray-50">
       {/* Header */}
@@ -122,132 +144,113 @@ export default function App() {
             <ShoppingBasket size={24} className="text-green-600" />
             <div>
               <h1 className="text-lg font-bold text-gray-900 leading-tight">Grocery Recipe Optimizer</h1>
-              <p className="text-xs text-gray-500 hidden sm:block">Scan deals · Build recipes · Minimize costs</p>
+              <p className="text-xs text-gray-500 hidden sm:block">Scan every deal · Build meals & snack carts · Minimize costs</p>
             </div>
           </div>
           {selectedStore && (
-            <div className="text-xs text-gray-500 bg-gray-100 px-3 py-1 rounded-full hidden sm:block">
-              {selectedStore.name}
-            </div>
+            <button
+              onClick={handleChangeStore}
+              className="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+            >
+              <Store size={13} />
+              <span className="hidden sm:inline">{selectedStore.name}</span>
+              <span className="text-green-600 font-medium">Change</span>
+            </button>
           )}
         </div>
 
-        {/* Progress steps */}
-        <div className="max-w-5xl mx-auto px-4 pb-3 flex items-center gap-2">
-          {[
-            { key: 'store', label: '1. Choose Store' },
-            { key: 'preferences', label: '2. Set Preferences' },
-            { key: 'plan', label: '3. Get Recipes' },
-          ].map((s, i) => (
-            <div key={s.key} className="flex items-center gap-2">
-              {i > 0 && <div className={`h-px w-8 ${stepIndex >= i ? 'bg-green-400' : 'bg-gray-200'}`} />}
-              <button
-                onClick={() => stepIndex >= i && setStep(s.key)}
-                className={`text-xs font-medium px-3 py-1 rounded-full transition-all ${
-                  step === s.key
-                    ? 'bg-green-600 text-white'
-                    : stepIndex > i
-                    ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                    : 'bg-gray-100 text-gray-400 cursor-default'
-                }`}
-              >
-                {s.label}
-              </button>
-            </div>
-          ))}
-        </div>
+        {/* Tabs (workspace only) */}
+        {view === 'workspace' && (
+          <div className="max-w-5xl mx-auto px-4 flex items-center gap-1">
+            {TABS.map(t => {
+              const Icon = t.icon
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  className={`flex items-center gap-1.5 text-sm font-medium px-4 py-2.5 border-b-2 transition-all ${
+                    activeTab === t.key
+                      ? 'border-green-600 text-green-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Icon size={15} />
+                  {t.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-5">
-        {/* Step 1: Store */}
-        {step === 'store' && (
-          <StoreSelector onStoreSelected={handleStoreSelected} />
-        )}
+        {view === 'store' && <StoreSelector onStoreSelected={handleStoreSelected} />}
 
-        {/* Step 2: Preferences + Deals */}
-        {step === 'preferences' && (
+        {view === 'workspace' && (
           <>
-            {/* Kroger account connection banner */}
-            <KrogerAuth
-              sessionId={sessionId}
-              onStatusChange={handleKrogerStatusChange}
-            />
+            <KrogerAuth sessionId={sessionId} onStatusChange={handleKrogerStatusChange} />
 
-            <PreferencesForm prefs={prefs} onChange={setPrefs} />
-
-            <DealsPanel
-              deals={deals}
-              loading={dealsLoading}
-              onRefresh={handleRefreshDeals}
-              demoMode={dealsDemoMode}
-              krogerConnected={krogerConnected}
-            />
-
-            <div className="flex justify-between items-center">
-              <button className="btn-secondary" onClick={() => setStep('store')}>
-                ← Change Store
-              </button>
-              <button
-                className="btn-primary flex items-center gap-2 px-6 py-3 text-base"
-                onClick={handleGeneratePlan}
-                disabled={planLoading}
-              >
-                <Sparkles size={18} />
-                Generate My Meal Plan
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Step 3: Plan */}
-        {step === 'plan' && (
-          <>
-            {planLoading && (
-              <div className="card p-12 flex flex-col items-center justify-center gap-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600" />
-                <div className="text-center">
-                  <div className="font-semibold text-gray-800">Building your meal plan...</div>
-                  <div className="text-sm text-gray-500 mt-1">Claude is analyzing deals and crafting optimal recipes</div>
-                </div>
-              </div>
+            {activeTab === 'deals' && (
+              <DealsBrowser
+                deals={deals}
+                loading={dealsLoading}
+                onRefresh={handleRefreshDeals}
+                demoMode={dealsDemoMode}
+                krogerConnected={krogerConnected}
+              />
             )}
 
-            {planError && (
-              <div className="card p-6">
-                <div className="flex items-start gap-3 text-red-600">
-                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
-                  <div>
-                    <div className="font-semibold mb-1">Failed to generate plan</div>
-                    <div className="text-sm text-red-500">{planError}</div>
-                  </div>
-                </div>
-                <button className="btn-secondary mt-4" onClick={handleGeneratePlan}>
-                  Try Again
-                </button>
-              </div>
-            )}
-
-            {plan && !planLoading && (
+            {activeTab === 'meals' && (
               <>
-                <RecipePlan plan={plan} />
-                <GroceryList groceryList={plan.grocery_list} />
+                <PreferencesForm prefs={prefs} onChange={setPrefs} />
+
+                <button
+                  className="btn-primary flex items-center gap-2 w-full justify-center py-3 text-base"
+                  onClick={handleGeneratePlan}
+                  disabled={planLoading}
+                >
+                  <Sparkles size={18} />
+                  {planLoading ? 'Building your meal plan...' : 'Generate My Meal Plan'}
+                </button>
+
+                {planLoading && (
+                  <div className="card p-12 flex flex-col items-center justify-center gap-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600" />
+                    <div className="text-center">
+                      <div className="font-semibold text-gray-800">Building your meal plan...</div>
+                      <div className="text-sm text-gray-500 mt-1">Claude is analyzing deals and crafting optimal recipes</div>
+                    </div>
+                  </div>
+                )}
+
+                {planError && (
+                  <div className="card p-6">
+                    <div className="flex items-start gap-3 text-red-600">
+                      <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-semibold mb-1">Failed to generate plan</div>
+                        <div className="text-sm text-red-500">{planError}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {plan && !planLoading && (
+                  <>
+                    <RecipePlan plan={plan} />
+                    <GroceryList groceryList={plan.grocery_list} />
+                  </>
+                )}
               </>
             )}
 
-            <div className="flex justify-between">
-              <button className="btn-secondary" onClick={() => setStep('preferences')}>
-                ← Adjust Preferences
-              </button>
-              {plan && (
-                <button
-                  className="btn-primary flex items-center gap-2"
-                  onClick={handleGeneratePlan}
-                >
-                  <Sparkles size={16} />
-                  Regenerate Plan
-                </button>
-              )}
-            </div>
+            {activeTab === 'snacks' && (
+              <SnackCartBuilder
+                storeId={selectedStore.id}
+                sessionId={sessionId}
+                krogerConnected={krogerConnected}
+              />
+            )}
           </>
         )}
       </main>

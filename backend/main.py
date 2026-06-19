@@ -9,10 +9,10 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from services.kroger import (
-    search_stores, get_deals, get_auth_url, exchange_code_for_token,
+    search_stores, get_deals, get_snack_deals, get_auth_url, exchange_code_for_token,
     store_user_token, get_user_session, clear_user_session, _get_app_token,
 )
-from services.recipe import generate_recipe_plan
+from services.recipe import generate_recipe_plan, generate_snack_cart
 
 app = FastAPI(title="Grocery Recipe Optimizer", version="1.0.0")
 
@@ -32,7 +32,25 @@ class StoreSearchRequest(BaseModel):
 
 class DealsRequest(BaseModel):
     store_id: str
-    limit: int = Field(default=50, ge=10, le=100)
+    limit: int = Field(default=120, ge=10, le=250)
+    session_id: str | None = None
+
+
+class CustomMacroTargets(BaseModel):
+    protein_g: float | None = None
+    max_carbs_g: float | None = None
+    max_calories: float | None = None
+    max_fat_g: float | None = None
+    max_sugar_g: float | None = None
+
+
+class SnackCartRequest(BaseModel):
+    store_id: str
+    macro_focus: str = Field(default="high_protein")
+    budget: float = Field(default=20.0, ge=2.0, le=200.0)
+    snacks_per_day: int = Field(default=2, ge=1, le=6)
+    num_days: int = Field(default=7, ge=1, le=30)
+    custom_targets: CustomMacroTargets | None = None
     session_id: str | None = None
 
 
@@ -158,3 +176,28 @@ async def generate_plan(req: RecipePlanRequest):
         return plan
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recipe generation failed: {str(e)}")
+
+
+@app.post("/api/snack-cart")
+async def build_snack_cart(req: SnackCartRequest):
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured.")
+
+    deals = await get_snack_deals(req.store_id, session_id=req.session_id)
+
+    custom = None
+    if req.macro_focus == "custom" and req.custom_targets:
+        custom = req.custom_targets.model_dump(exclude_none=True)
+
+    try:
+        cart = await generate_snack_cart(
+            deals=deals,
+            macro_focus=req.macro_focus,
+            budget=req.budget,
+            snacks_per_day=req.snacks_per_day,
+            num_days=req.num_days,
+            custom_targets=custom,
+        )
+        return cart
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snack cart generation failed: {str(e)}")
