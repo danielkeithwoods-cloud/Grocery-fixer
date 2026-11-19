@@ -1,26 +1,39 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import anthropic
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from security import protection_enabled, rate_limit_ai, require_access
 from services.kroger import (
     search_stores, get_deals, get_snack_deals, get_auth_url, exchange_code_for_token,
     store_user_token, get_user_session, clear_user_session,
 )
 from services.recipe import generate_recipe_plan, generate_snack_cart, swap_meal
 
-app = FastAPI(title="Grocery Recipe Optimizer", version="2.1.0")
+app = FastAPI(title="Grocery Recipe Optimizer", version="2.2.0")
+
+# When the built frontend is bundled alongside the backend (see Dockerfile) the
+# whole app is served from one origin — no CORS, no separate frontend URL.
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def frontend_url() -> str:
     """Where the browser app is served from. Set FRONTEND_URL when deploying."""
-    return (os.getenv("FRONTEND_URL") or "http://localhost:5173").strip().rstrip("/")
+    configured = (os.getenv("FRONTEND_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+    # Bundled single-service deploy: the app is served from this same origin.
+    if STATIC_DIR.is_dir():
+        return (os.getenv("BACKEND_URL") or "").strip().rstrip("/") or ""
+    return "http://localhost:5173"
 
 
 def _allowed_origins() -> list[str]:
@@ -43,13 +56,13 @@ app.add_middleware(
 def _friendly_error(e: Exception) -> str:
     """Turn SDK and parsing failures into something a user can act on."""
     if isinstance(e, anthropic.AuthenticationError):
-        return ("The ANTHROPIC_API_KEY in backend/.env is invalid or expired. "
+        return ("The ANTHROPIC_API_KEY is invalid or expired. "
                 "Check it at console.anthropic.com, then restart the backend.")
     if isinstance(e, anthropic.PermissionDeniedError):
         return "This API key doesn't have access to the configured model."
     if isinstance(e, anthropic.NotFoundError):
         return (f"Model '{os.getenv('ANTHROPIC_MODEL') or 'claude-opus-5-5'}' was not found. "
-                "Check ANTHROPIC_MODEL in backend/.env.")
+                "Check ANTHROPIC_MODEL.")
     if isinstance(e, anthropic.RateLimitError):
         return "Rate limited by the Anthropic API. Wait a few seconds and try again."
     if isinstance(e, anthropic.BadRequestError):
@@ -68,6 +81,8 @@ def _friendly_error(e: Exception) -> str:
         return "The AI returned a malformed response. Try generating again."
     return str(e)
 
+
+# --- Request models ---
 
 class StoreSearchRequest(BaseModel):
     zip_code: str
@@ -145,17 +160,50 @@ class SnackCartRequest(BaseModel):
     session_id: str | None = None
 
 
+# --- Open endpoints (no access code) ---
+
 @app.get("/health")
 async def health():
+    """Unauthenticated so hosting platforms can health-check the service."""
     return {
         "status": "ok",
         "model": os.getenv("ANTHROPIC_MODEL") or "claude-opus-5-5",
         "anthropic_configured": bool(os.getenv("ANTHROPIC_API_KEY")),
         "kroger_configured": bool(os.getenv("KROGER_CLIENT_ID")),
+        "access_protected": protection_enabled(),
+        "serving_frontend": STATIC_DIR.is_dir(),
     }
 
 
-@app.get("/api/test-kroger")
+@app.get("/api/kroger/callback")
+async def kroger_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
+    """Kroger redirects the browser here, so it can't carry the access header."""
+    app_url = frontend_url().split(",")[0]
+    if error:
+        return RedirectResponse(url=f"{app_url}/?kroger_error={error}")
+    if not code or not state:
+        return RedirectResponse(url=f"{app_url}/?kroger_error=missing_params")
+    try:
+        token_data = await exchange_code_for_token(code)
+        store_user_token(state, token_data)
+        return RedirectResponse(url=f"{app_url}/?kroger_connected=true&session_id={state}")
+    except Exception:
+        return RedirectResponse(url=f"{app_url}/?kroger_error=token_exchange_failed")
+
+
+# --- Protected API ---
+
+api = APIRouter(prefix="/api", dependencies=[Depends(require_access)])
+ai_guard = [Depends(rate_limit_ai)]
+
+
+@api.get("/auth-check")
+async def auth_check():
+    """Returns 401 when the access code is missing or wrong; the UI gates on this."""
+    return {"ok": True, "protected": protection_enabled()}
+
+
+@api.get("/test-kroger")
 async def test_kroger():
     import base64, httpx
     client_id = os.getenv("KROGER_CLIENT_ID", "").strip()
@@ -176,44 +224,25 @@ async def test_kroger():
     }
 
 
-# --- Kroger OAuth ---
-
-@app.get("/api/kroger/login")
+@api.get("/kroger/login")
 async def kroger_login(session_id: str = Query(...)):
     if not os.getenv("KROGER_CLIENT_ID"):
         raise HTTPException(status_code=503, detail="Kroger credentials not configured")
     return {"auth_url": get_auth_url(session_id)}
 
 
-@app.get("/api/kroger/callback")
-async def kroger_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
-    app_url = frontend_url().split(",")[0]
-    if error:
-        return RedirectResponse(url=f"{app_url}?kroger_error={error}")
-    if not code or not state:
-        return RedirectResponse(url=f"{app_url}?kroger_error=missing_params")
-    try:
-        token_data = await exchange_code_for_token(code)
-        store_user_token(state, token_data)
-        return RedirectResponse(url=f"{app_url}?kroger_connected=true&session_id={state}")
-    except Exception:
-        return RedirectResponse(url=f"{app_url}?kroger_error=token_exchange_failed")
-
-
-@app.get("/api/kroger/status")
+@api.get("/kroger/status")
 async def kroger_status(session_id: str = Query(...)):
     return {"connected": get_user_session(session_id) is not None}
 
 
-@app.post("/api/kroger/logout")
+@api.post("/kroger/logout")
 async def kroger_logout(session_id: str = Query(...)):
     clear_user_session(session_id)
     return {"status": "logged_out"}
 
 
-# --- Main endpoints ---
-
-@app.post("/api/stores")
+@api.post("/stores")
 async def find_stores(req: StoreSearchRequest):
     try:
         stores = await search_stores(req.zip_code, req.radius_miles)
@@ -222,7 +251,7 @@ async def find_stores(req: StoreSearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/deals")
+@api.post("/deals")
 async def fetch_deals(req: DealsRequest):
     try:
         deals = await get_deals(req.store_id, req.limit, session_id=req.session_id)
@@ -237,10 +266,10 @@ async def fetch_deals(req: DealsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/generate-plan")
+@api.post("/generate-plan", dependencies=ai_guard)
 async def generate_plan(req: RecipePlanRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
 
     deals = await get_deals(req.store_id, limit=120, session_id=req.session_id)
     try:
@@ -261,10 +290,10 @@ async def generate_plan(req: RecipePlanRequest):
         raise HTTPException(status_code=500, detail=_friendly_error(e))
 
 
-@app.post("/api/swap-meal")
+@api.post("/swap-meal", dependencies=ai_guard)
 async def swap_one_meal(req: SwapMealRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
 
     deals = await get_deals(req.store_id, limit=120, session_id=req.session_id)
     try:
@@ -288,10 +317,10 @@ async def swap_one_meal(req: SwapMealRequest):
         raise HTTPException(status_code=500, detail=_friendly_error(e))
 
 
-@app.post("/api/snack-cart")
+@api.post("/snack-cart", dependencies=ai_guard)
 async def build_snack_cart(req: SnackCartRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
 
     deals = await get_snack_deals(req.store_id, session_id=req.session_id)
     custom = None
@@ -311,3 +340,38 @@ async def build_snack_cart(req: SnackCartRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=_friendly_error(e))
+
+
+app.include_router(api)
+
+
+# --- Serve the built frontend (single-service deploy) ---
+# Registered last so it never shadows an API route.
+
+if STATIC_DIR.is_dir():
+    _ROOT = STATIC_DIR.resolve()
+    # These must not be cached hard, or clients get stuck on an old build.
+    _NO_CACHE = {"index.html", "sw.js", "manifest.webmanifest"}
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # Unknown API paths should 404, not fall through to the HTML shell.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        if full_path:
+            candidate = (_ROOT / full_path).resolve()
+            # Containment is checked first, so a traversal path is rejected
+            # before it is ever stat'd.
+            if candidate.is_relative_to(_ROOT) and candidate.is_file():
+                name = candidate.name
+                if name in _NO_CACHE:
+                    headers = {"Cache-Control": "no-cache"}
+                elif candidate.parent.name == "assets":
+                    # Vite fingerprints these filenames, so they're safe to pin.
+                    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+                else:
+                    headers = {"Cache-Control": "public, max-age=3600"}
+                return FileResponse(candidate, headers=headers)
+
+        return FileResponse(_ROOT / "index.html", headers={"Cache-Control": "no-cache"})

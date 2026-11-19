@@ -1,0 +1,46 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# One Docker service serving both the API and the built frontend.
+# In Render: New → Blueprint → pick this repo. It reads this file.
+#
+# Secrets are marked `sync: false`, so Render prompts for them instead of
+# storing them in this file. Never commit real keys here.
+
+services:
+  - type: web
+    name: grocery-fixer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # Required — recipe and snack cart generation.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional — claude-sonnet-5-5 costs roughly half as much per plan.
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-5-5
+
+      # Optional — without these the app runs on built-in demo deals.
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
+
+      # Keeps strangers from spending your Anthropic credits.
+      # Render generates this; read it in the dashboard under Environment.
+      - key: APP_ACCESS_CODE
+        generateValue: true
+
+      # Billable AI calls allowed per client per hour. 0 disables the limit.
+      - key: AI_RATE_LIMIT_PER_HOUR
+        value: "30"
+
+      # Set this to the service's own URL after the first deploy — it builds the
+      # Kroger OAuth redirect. e.g. https://grocery-fixer.onrender.com
+      - key: BACKEND_URL
+        sync: false

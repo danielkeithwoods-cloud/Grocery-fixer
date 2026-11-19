@@ -97,21 +97,17 @@ Good for planning at home. Will **not** work in the store.
 5. On your phone, open `http://192.168.1.50:5173`, then **Share → Add to Home Screen**
    (iOS, Safari) or **⋮ → Install app / Add to Home screen** (Android, Chrome).
 
-### Option B — deploy it (free tiers, ~30 minutes)
+### Option B — deploy it (free tier, ~15 minutes) — **recommended**
 
 Needed if you want it **in the store**, which is where shopping mode earns its keep.
 
-1. Deploy `backend/` to a host that runs Python (Render, Railway, Fly.io all have free
-   or cheap tiers). Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
-   Set `ANTHROPIC_API_KEY`, `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, and
-   `FRONTEND_URL` / `BACKEND_URL` to the deployed URLs.
-2. Deploy `frontend/` to Vercel, Netlify or Cloudflare Pages. Build `npm run build`,
-   output `dist`. Set `VITE_API_BASE=https://your-backend-url/api`.
-3. Add `https://your-backend-url/api/kroger/callback` as a Kroger Redirect URI.
-4. Open the site on your phone and add it to the home screen as above.
+**→ Full walkthrough: [DEPLOY.md](./DEPLOY.md)**
 
-HTTPS comes free with all of those hosts, which iOS requires for a PWA to install
-properly — so a deployed version installs more cleanly than the LAN option.
+In short: the repo ships a [`Dockerfile`](./Dockerfile) that builds the React app and
+serves it from FastAPI on one origin, plus a [`render.yaml`](./render.yaml) blueprint.
+Point Render at the repo, paste in your API keys, and you get a single HTTPS URL
+protected by a generated access code. HTTPS also means iOS installs it cleanly as a
+PWA, which the LAN option doesn't guarantee.
 
 > **Note on Option A and iOS:** iOS is stricter about installing PWAs over plain
 > `http://`. If Add to Home Screen behaves oddly on a LAN IP, use Option B.

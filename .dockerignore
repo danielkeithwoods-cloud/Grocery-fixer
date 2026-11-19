@@ -1,0 +1,17 @@
+# Build context excludes — keeps the image small and avoids leaking local secrets.
+**/.env
+**/.env.*
+!**/.env.example
+
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+
+.git
+.github
+*.md
+!README.md
+.DS_Store

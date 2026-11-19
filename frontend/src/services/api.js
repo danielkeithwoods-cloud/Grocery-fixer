@@ -3,10 +3,40 @@
 // backend URL, like https://grocery-fixer-api.onrender.com/api
 const BASE = import.meta.env.VITE_API_BASE || '/api'
 
+const CODE_KEY = 'gfx:accessCode'
+
+export function getAccessCode() {
+  try {
+    return localStorage.getItem(CODE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setAccessCode(code) {
+  try {
+    code ? localStorage.setItem(CODE_KEY, code) : localStorage.removeItem(CODE_KEY)
+  } catch {
+    /* storage blocked — the code just won't persist */
+  }
+}
+
+export class UnauthorizedError extends Error {
+  constructor(message) {
+    super(message || 'Access code required.')
+    this.name = 'UnauthorizedError'
+  }
+}
+
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, options)
+  const code = getAccessCode()
+  const headers = { ...(options.headers || {}) }
+  if (code) headers['X-Access-Code'] = code
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
+    if (res.status === 401) throw new UnauthorizedError(err.detail)
     throw new Error(err.detail || 'Request failed')
   }
   return res.json()
@@ -27,6 +57,8 @@ const qs = (params) =>
     .join('&')
 
 export const api = {
+  authCheck: () => get('/auth-check'),
+
   findStores: (zipCode, radiusMiles = 10) =>
     post('/stores', { zip_code: zipCode, radius_miles: radiusMiles }),
 
