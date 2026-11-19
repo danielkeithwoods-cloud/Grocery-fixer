@@ -20,6 +20,23 @@ const DEFAULT_PREFS = {
   restrictions: [],
   dislikes: [],
   pantry_items: [],
+  household: [],
+}
+
+// Older saved preferences only had a people count — expand it into a household
+// list so the calorie-target editor always has rows to show.
+function migratePrefs(stored) {
+  const merged = { ...DEFAULT_PREFS, ...(stored || {}) }
+  if (!Array.isArray(merged.household) || merged.household.length === 0) {
+    const n = Math.min(20, Math.max(1, merged.num_people || 1))
+    merged.household = Array.from({ length: n }, (_, i) => ({
+      name: `Person ${i + 1}`,
+      calories_per_day: 2000,
+      notes: '',
+    }))
+  }
+  merged.num_people = merged.household.length
+  return merged
 }
 
 const TABS = [
@@ -35,7 +52,7 @@ export default function App() {
   const [view, setView] = useState('store')
   const [activeTab, setActiveTab] = useState(() => load(KEYS.activeTab, 'deals'))
   const [selectedStore, setSelectedStore] = useState(null)
-  const [prefs, setPrefs] = useState(() => ({ ...DEFAULT_PREFS, ...(load(KEYS.prefs) || {}) }))
+  const [prefs, setPrefs] = useState(() => migratePrefs(load(KEYS.prefs)))
 
   const [deals, setDeals] = useState([])
   const [dealsLoading, setDealsLoading] = useState(false)
@@ -123,6 +140,7 @@ export default function App() {
       restrictions: prefs.restrictions || [],
       dislikes: prefs.dislikes || [],
       pantry_items: prefs.pantry_items || [],
+      household: prefs.household || [],
     }
   }
 
@@ -167,6 +185,7 @@ export default function App() {
         meat_preference: prefs.meat_preference,
         budget_per_meal:
           (prefs.budget_per_person_per_day * prefs.num_people) / Math.max(1, prefs.meals_per_day),
+        meals_per_day: prefs.meals_per_day,
         previous_meal_name: target.name,
         avoid_names: allNames,
         ...dietaryPayload(),
@@ -222,7 +241,7 @@ export default function App() {
               const Icon = t.icon
               return (
                 <button key={t.key} onClick={() => setActiveTab(t.key)}
-                  className={`flex items-center gap-1.5 text-sm font-medium px-4 py-2.5 border-b-2 transition-all ${
+                  className={`flex items-center gap-1.5 text-sm font-medium whitespace-nowrap px-2.5 sm:px-4 py-2.5 border-b-2 transition-all ${
                     activeTab === t.key
                       ? 'border-green-600 text-green-700'
                       : 'border-transparent text-gray-500 hover:text-gray-700'

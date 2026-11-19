@@ -11,7 +11,9 @@ Scan live grocery store deals and let Claude AI build an optimized weekly meal p
 - **Digital coupons** — connect your Kroger account (OAuth) to fold your clipped digital coupons into deal pricing
 - **User preferences** — set number of people, days, meals per day, macro profile, and meat preference (chicken, beef, pork, fish, vegetarian, vegan)
 - **Budget control** — specify a budget per person per day for meals, or a total budget for snack carts
+- **Household & calorie targets** — name each person and set their own daily calorie target; everyone eats the same dishes and the plan sizes each person's portion to hit their number, then reports delivered vs. target per day
 - **Allergies, dislikes & pantry** — mark allergens to avoid entirely, ingredients you dislike, and staples you already own (kept off the shopping list and out of the cost total)
+- **Installable on your phone** — add it to your home screen and it opens full-screen like a native app, with the shell cached so it still opens in a store with no signal
 - **Swap a single meal** — don't like one dinner? Regenerate just that meal instead of the whole plan
 - **Shopping mode** — an in-store view with large tap targets, a running "in cart" vs "still to get" total, and checked items sorted to the bottom of each aisle
 - **Nothing is lost on refresh** — plans, snack carts, preferences, check-offs, and recent stores persist locally
@@ -63,6 +65,64 @@ npm run dev
 ```
 
 Frontend runs on http://localhost:5173 and proxies `/api` requests to the backend.
+
+## Installing it on your phone
+
+The app is a PWA, so no app store is involved — you open it in the phone's browser and
+add it to the home screen. It then gets its own icon and opens full-screen.
+
+The only real work is making the app reachable from your phone, since by default both
+halves run on `localhost` on your PC.
+
+### Option A — same Wi-Fi (free, ~10 minutes)
+
+Good for planning at home. Will **not** work in the store.
+
+1. Find your PC's LAN IP (`ipconfig` on Windows — something like `192.168.1.50`).
+2. Bind both servers to all interfaces:
+   ```bash
+   # backend
+   uvicorn main:app --host 0.0.0.0 --port 8000
+   # frontend
+   npm run dev -- --host
+   ```
+3. In `backend/.env`, point the app at that IP so CORS and the Kroger redirect match:
+   ```
+   FRONTEND_URL=http://192.168.1.50:5173
+   BACKEND_URL=http://192.168.1.50:8000
+   ```
+   If you use Kroger sign-in, also add `http://192.168.1.50:8000/api/kroger/callback`
+   as a Redirect URI on your Kroger developer app.
+4. Allow Node and Python through the Windows firewall when prompted.
+5. On your phone, open `http://192.168.1.50:5173`, then **Share → Add to Home Screen**
+   (iOS, Safari) or **⋮ → Install app / Add to Home screen** (Android, Chrome).
+
+### Option B — deploy it (free tiers, ~30 minutes)
+
+Needed if you want it **in the store**, which is where shopping mode earns its keep.
+
+1. Deploy `backend/` to a host that runs Python (Render, Railway, Fly.io all have free
+   or cheap tiers). Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+   Set `ANTHROPIC_API_KEY`, `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, and
+   `FRONTEND_URL` / `BACKEND_URL` to the deployed URLs.
+2. Deploy `frontend/` to Vercel, Netlify or Cloudflare Pages. Build `npm run build`,
+   output `dist`. Set `VITE_API_BASE=https://your-backend-url/api`.
+3. Add `https://your-backend-url/api/kroger/callback` as a Kroger Redirect URI.
+4. Open the site on your phone and add it to the home screen as above.
+
+HTTPS comes free with all of those hosts, which iOS requires for a PWA to install
+properly — so a deployed version installs more cleanly than the LAN option.
+
+> **Note on Option A and iOS:** iOS is stricter about installing PWAs over plain
+> `http://`. If Add to Home Screen behaves oddly on a LAN IP, use Option B.
+
+### Option C — a real native app
+
+Wrapping this in [Capacitor](https://capacitorjs.com/) produces an actual iOS/Android
+binary. It mostly works out of the box since the app is already a web app, but
+shipping to an iPhone needs a Mac with Xcode and a $99/year Apple Developer account
+to keep it installed beyond 7 days. Not worth it unless you need camera, barcode
+scanning, or push notifications — the PWA covers everything this app currently does.
 
 ## How It Works
 

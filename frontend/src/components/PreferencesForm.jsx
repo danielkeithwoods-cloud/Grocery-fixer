@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Users, Calendar, Utensils, DollarSign, ShieldAlert, ChevronDown, ChevronUp, Package } from 'lucide-react'
+import { Calendar, Utensils, DollarSign, ShieldAlert, ChevronDown, ChevronUp, Package } from 'lucide-react'
 import ChipInput from './ChipInput'
+import HouseholdEditor from './HouseholdEditor'
 
 const MACRO_OPTIONS = [
   { value: 'balanced', label: 'Balanced', desc: '30P / 40C / 30F' },
@@ -58,12 +59,15 @@ export default function PreferencesForm({ prefs, onChange }) {
         Your Preferences
       </h2>
 
+      {/* Household — names + per-person daily calorie targets */}
+      <div className="mb-5">
+        <HouseholdEditor
+          household={prefs.household || []}
+          onChange={v => onChange({ ...prefs, household: v, num_people: Math.max(1, v.length) })}
+        />
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-        <div>
-          <label className="label flex items-center gap-1.5"><Users size={14} /> Number of People</label>
-          <input type="number" min={1} max={20} className="input" value={prefs.num_people}
-            onChange={e => update('num_people', parseInt(e.target.value) || 1)} />
-        </div>
         <div>
           <label className="label flex items-center gap-1.5"><Calendar size={14} /> Number of Days</label>
           <input type="number" min={1} max={14} className="input" value={prefs.num_days}

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Tag, LogIn, LogOut, CheckCircle } from 'lucide-react'
+import { api } from '../services/api'
 
 export default function KrogerAuth({ sessionId, onStatusChange }) {
   const [connected, setConnected] = useState(false)
@@ -11,8 +12,7 @@ export default function KrogerAuth({ sessionId, onStatusChange }) {
 
   async function checkStatus() {
     try {
-      const res = await fetch(`/api/kroger/status?session_id=${sessionId}`)
-      const data = await res.json()
+      const data = await api.krogerStatus(sessionId)
       setConnected(data.connected)
       onStatusChange(data.connected)
     } catch {
@@ -23,8 +23,7 @@ export default function KrogerAuth({ sessionId, onStatusChange }) {
   async function handleConnect() {
     setLoading(true)
     try {
-      const res = await fetch(`/api/kroger/login?session_id=${sessionId}`)
-      const data = await res.json()
+      const data = await api.krogerLoginUrl(sessionId)
       if (data.auth_url) {
         window.location.href = data.auth_url
       }
@@ -36,7 +35,7 @@ export default function KrogerAuth({ sessionId, onStatusChange }) {
   async function handleDisconnect() {
     setLoading(true)
     try {
-      await fetch(`/api/kroger/logout?session_id=${sessionId}`, { method: 'POST' })
+      await api.krogerLogout(sessionId)
       setConnected(false)
       onStatusChange(false)
     } finally {

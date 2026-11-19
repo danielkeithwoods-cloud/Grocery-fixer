@@ -62,10 +62,40 @@ MEAL_SCHEMA_HINT = """{
   ],
   "instructions": ["Step 1", "Step 2"],
   "macros_per_serving": {"calories": 450, "protein_g": 35, "carbs_g": 40, "fat_g": 15},
+  "per_person_portions": [{"name": "Alex", "servings": 1.3, "calories": 585}],
   "prep_time_minutes": 20,
   "cook_time_minutes": 25,
   "estimated_meal_cost": 8.50
 }"""
+
+
+def _household_block(household: list[dict] | None, meals_per_day: int) -> str:
+    """Per-person calorie targets. Everyone eats the same dishes; portions differ."""
+    if not household:
+        return ""
+    lines = []
+    total = 0
+    for p in household:
+        name = (p.get("name") or "Person").strip()
+        cals = int(p.get("calories_per_day") or 0)
+        total += cals
+        note = (p.get("notes") or "").strip()
+        lines.append(f"- {name} — {cals:,} cal/day" + (f" (note: {note})" if note else ""))
+
+    per_meal = round(total / max(1, meals_per_day) / max(1, len(household)))
+    return (
+        "HOUSEHOLD — size each person's portion to hit their own daily calorie target:\n"
+        + "\n".join(lines)
+        + f"\nHousehold total: {total:,} cal/day across {len(household)} "
+        + f"{'person' if len(household) == 1 else 'people'}"
+        + f" (~{per_meal:,} cal per person per meal at {meals_per_day} meals/day).\n\n"
+        "PORTIONING RULES:\n"
+        "- Everyone eats the SAME dishes — vary the portion size per person, never the recipe\n"
+        "- Cook enough total food to cover every person's portion\n"
+        "- In each meal, 'per_person_portions' gives each person's share as a multiple of one\n"
+        "  standard serving (e.g. 1.3 servings) plus the calories that portion delivers\n"
+        "- Each person's portions across the day should land within ~10% of their target\n\n"
+    )
 
 
 def _model() -> str:
@@ -155,6 +185,7 @@ async def generate_recipe_plan(
     restrictions: list[str] | None = None,
     dislikes: list[str] | None = None,
     pantry_items: list[str] | None = None,
+    household: list[dict] | None = None,
 ) -> dict:
     client = _client()
 
@@ -171,7 +202,7 @@ CONSTRAINTS:
 - Meat/protein preference: {meat_desc}
 - Maximize use of sale items to minimize cost
 
-{_constraints_block(restrictions, dislikes, pantry_items)}INSTRUCTIONS:
+{_household_block(household, meals_per_day)}{_constraints_block(restrictions, dislikes, pantry_items)}INSTRUCTIONS:
 1. Build {num_days} days of meals, each with {meals_per_day} meals (breakfast, lunch, dinner if 3)
 2. Keep each recipe practical, with fewer than 8 ingredients
 3. Heavily favor the sale items listed above
@@ -204,6 +235,9 @@ Return ONLY this JSON structure:
     "cost_per_person_per_day": 4.25,
     "average_daily_calories_per_person": 2000,
     "total_savings_from_deals": 35.00,
+    "per_person_daily": [
+      {{"name": "Alex", "target_calories": 2400, "planned_calories": 2380}}
+    ],
     "shopping_tips": ["Tip 1", "Tip 2"]
   }}
 }}"""
@@ -236,6 +270,8 @@ async def swap_meal(
     restrictions: list[str] | None = None,
     dislikes: list[str] | None = None,
     pantry_items: list[str] | None = None,
+    household: list[dict] | None = None,
+    meals_per_day: int = 3,
 ) -> dict:
     """Regenerate a single meal without rebuilding the whole plan."""
     client = _client()
@@ -256,7 +292,7 @@ CONSTRAINTS:
 - Favor the sale items listed above
 - Must be a genuinely different dish from the one being replaced
 
-{_constraints_block(restrictions, dislikes, pantry_items)}"""
+{_household_block(household, meals_per_day)}{_constraints_block(restrictions, dislikes, pantry_items)}"""
 
     if avoid:
         task += (

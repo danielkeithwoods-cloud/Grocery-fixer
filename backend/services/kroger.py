@@ -7,7 +7,19 @@ import httpx
 KROGER_BASE = "https://api.kroger.com/v1"
 KROGER_TOKEN_URL = f"{KROGER_BASE}/connect/oauth2/token"
 KROGER_AUTH_URL = f"{KROGER_BASE}/connect/oauth2/authorize"
-REDIRECT_URI = "http://localhost:8000/api/kroger/callback"
+
+
+def redirect_uri() -> str:
+    """Where Kroger sends the user back after sign-in.
+
+    Must match a Redirect URI registered on the Kroger developer application.
+    Set KROGER_REDIRECT_URI (or BACKEND_URL) when the backend isn't on localhost.
+    """
+    explicit = (os.getenv("KROGER_REDIRECT_URI") or "").strip()
+    if explicit:
+        return explicit
+    base = (os.getenv("BACKEND_URL") or "http://localhost:8000").strip().rstrip("/")
+    return f"{base}/api/kroger/callback"
 
 # App-level client credentials token cache
 _app_token_cache: dict = {"token": None, "expires_at": 0}
@@ -135,7 +147,7 @@ def get_auth_url(session_id: str) -> str:
     from urllib.parse import urlencode
     params = urlencode({
         "client_id": os.getenv("KROGER_CLIENT_ID", "").strip(),
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": redirect_uri(),
         "response_type": "code",
         "scope": "product.compact profile.compact",
         "state": session_id,
@@ -148,7 +160,7 @@ async def exchange_code_for_token(code: str) -> dict:
         resp = await client.post(
             KROGER_TOKEN_URL,
             headers={"Authorization": f"Basic {_get_basic_auth()}", "Content-Type": "application/x-www-form-urlencoded"},
-            data={"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT_URI},
+            data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri()},
         )
         resp.raise_for_status()
         return resp.json()

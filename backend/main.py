@@ -15,11 +15,25 @@ from services.kroger import (
 )
 from services.recipe import generate_recipe_plan, generate_snack_cart, swap_meal
 
-app = FastAPI(title="Grocery Recipe Optimizer", version="2.0.0")
+app = FastAPI(title="Grocery Recipe Optimizer", version="2.1.0")
+
+
+def frontend_url() -> str:
+    """Where the browser app is served from. Set FRONTEND_URL when deploying."""
+    return (os.getenv("FRONTEND_URL") or "http://localhost:5173").strip().rstrip("/")
+
+
+def _allowed_origins() -> list[str]:
+    # FRONTEND_URL may be a comma-separated list (e.g. a LAN IP plus a hosted URL).
+    configured = [o.strip().rstrip("/") for o in (os.getenv("FRONTEND_URL") or "").split(",") if o.strip()]
+    defaults = ["http://localhost:5173", "http://localhost:3000"]
+    return list(dict.fromkeys(configured + defaults))
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_allowed_origins(),
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,10 +80,24 @@ class DealsRequest(BaseModel):
     session_id: str | None = None
 
 
+class HouseholdMember(BaseModel):
+    name: str = Field(default="Person", max_length=40)
+    calories_per_day: int = Field(default=2000, ge=800, le=6000)
+    notes: str = Field(default="", max_length=200)
+
+
 class DietaryPrefs(BaseModel):
     restrictions: list[str] = Field(default_factory=list)
     dislikes: list[str] = Field(default_factory=list)
     pantry_items: list[str] = Field(default_factory=list)
+    household: list[HouseholdMember] = Field(default_factory=list, max_length=20)
+
+    def household_dicts(self) -> list[dict]:
+        return [m.model_dump() for m in self.household]
+
+    def people_count(self, fallback: int) -> int:
+        """The household list is authoritative when present."""
+        return len(self.household) or fallback
 
 
 class RecipePlanRequest(DietaryPrefs):
@@ -91,6 +119,7 @@ class SwapMealRequest(DietaryPrefs):
     macro_profile: str = Field(default="balanced")
     meat_preference: str = Field(default="any")
     budget_per_meal: float = Field(default=12.0, ge=1.0, le=200.0)
+    meals_per_day: int = Field(default=3, ge=1, le=3)
     previous_meal_name: str = ""
     avoid_names: list[str] = Field(default_factory=list)
     session_id: str | None = None
@@ -158,16 +187,17 @@ async def kroger_login(session_id: str = Query(...)):
 
 @app.get("/api/kroger/callback")
 async def kroger_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
+    app_url = frontend_url().split(",")[0]
     if error:
-        return RedirectResponse(url=f"http://localhost:5173?kroger_error={error}")
+        return RedirectResponse(url=f"{app_url}?kroger_error={error}")
     if not code or not state:
-        return RedirectResponse(url="http://localhost:5173?kroger_error=missing_params")
+        return RedirectResponse(url=f"{app_url}?kroger_error=missing_params")
     try:
         token_data = await exchange_code_for_token(code)
         store_user_token(state, token_data)
-        return RedirectResponse(url=f"http://localhost:5173?kroger_connected=true&session_id={state}")
+        return RedirectResponse(url=f"{app_url}?kroger_connected=true&session_id={state}")
     except Exception:
-        return RedirectResponse(url="http://localhost:5173?kroger_error=token_exchange_failed")
+        return RedirectResponse(url=f"{app_url}?kroger_error=token_exchange_failed")
 
 
 @app.get("/api/kroger/status")
@@ -216,7 +246,7 @@ async def generate_plan(req: RecipePlanRequest):
     try:
         return await generate_recipe_plan(
             deals=deals,
-            num_people=req.num_people,
+            num_people=req.people_count(req.num_people),
             num_days=req.num_days,
             macro_profile=req.macro_profile,
             meat_preference=req.meat_preference,
@@ -225,6 +255,7 @@ async def generate_plan(req: RecipePlanRequest):
             restrictions=req.restrictions,
             dislikes=req.dislikes,
             pantry_items=req.pantry_items,
+            household=req.household_dicts(),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=_friendly_error(e))
@@ -241,7 +272,7 @@ async def swap_one_meal(req: SwapMealRequest):
             deals=deals,
             meal_type=req.meal_type,
             day=req.day,
-            num_people=req.num_people,
+            num_people=req.people_count(req.num_people),
             macro_profile=req.macro_profile,
             meat_preference=req.meat_preference,
             budget_per_meal=req.budget_per_meal,
@@ -250,6 +281,8 @@ async def swap_one_meal(req: SwapMealRequest):
             restrictions=req.restrictions,
             dislikes=req.dislikes,
             pantry_items=req.pantry_items,
+            household=req.household_dicts(),
+            meals_per_day=req.meals_per_day,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=_friendly_error(e))

@@ -63,14 +63,37 @@ export default function RecipePlan({ plan, onSwapMeal, swappingKey }) {
         ))}
       </div>
 
-      {/* Day nutrition rollup */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 mb-4 text-sm">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Day {currentDay.day} total / person</span>
+      {/* Day nutrition rollup (one standard serving at each meal) */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 mb-3 text-sm">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Day {currentDay.day} · 1 serving/meal</span>
         <span className="flex items-center gap-1 text-orange-600"><Flame size={13} /> {totals.calories.toLocaleString()} cal</span>
         <span className="flex items-center gap-1 text-blue-600"><Dumbbell size={13} /> {totals.protein_g}g protein</span>
         <span className="flex items-center gap-1 text-amber-600"><Zap size={13} /> {totals.carbs_g}g carbs</span>
         <span className="text-gray-500">{totals.fat_g}g fat</span>
       </div>
+
+      {/* Per-person calorie targets vs. what the plan delivers */}
+      {summary.per_person_daily?.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          {summary.per_person_daily.map((p, i) => {
+            const target = p.target_calories || 0
+            const planned = p.planned_calories || 0
+            const delta = target ? Math.round(((planned - target) / target) * 100) : 0
+            const onTarget = Math.abs(delta) <= 10
+            return (
+              <div key={i} className="border border-gray-200 rounded-xl px-3 py-2">
+                <div className="text-sm font-semibold text-gray-800 truncate">{p.name}</div>
+                <div className="text-xs text-gray-500">
+                  {planned.toLocaleString()} / {target.toLocaleString()} cal
+                </div>
+                <div className={`text-xs font-semibold ${onTarget ? 'text-green-600' : 'text-amber-600'}`}>
+                  {delta === 0 ? 'on target' : `${delta > 0 ? '+' : ''}${delta}%`}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Meals */}
       <div className="space-y-3">
@@ -122,6 +145,22 @@ export default function RecipePlan({ plan, onSwapMeal, swappingKey }) {
                     <span className="flex items-center gap-1"><Clock size={13} /> Cook: {meal.cook_time_minutes}m</span>
                     <span className="flex items-center gap-1"><Users size={13} /> {meal.servings} servings</span>
                   </div>
+
+                  {/* Who gets how much */}
+                  {meal.per_person_portions?.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-gray-700 mb-2">Portions</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {meal.per_person_portions.map((p, pi) => (
+                          <span key={pi} className="inline-flex items-baseline gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 text-sm">
+                            <span className="font-medium text-gray-800">{p.name}</span>
+                            <span className="text-green-700 font-semibold">{p.servings}×</span>
+                            {p.calories != null && <span className="text-xs text-gray-400">{p.calories} cal</span>}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <h4 className="text-sm font-semibold text-gray-700 mb-2">Ingredients</h4>
                   <ul className="space-y-1 mb-4">
