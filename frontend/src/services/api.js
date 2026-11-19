@@ -22,5 +22,7 @@ export const api = {
 
   generatePlan: (params) => post('/generate-plan', params),
 
+  swapMeal: (params) => post('/swap-meal', params),
+
   buildSnackCart: (params) => post('/snack-cart', params),
 }

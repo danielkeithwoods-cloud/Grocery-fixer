@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { Cookie, Sparkles, AlertCircle, Flame, Dumbbell, Zap, Candy, ShoppingCart, Download } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Cookie, Sparkles, AlertCircle, Flame, Dumbbell, Zap, Candy, ShoppingCart, Download, Printer } from 'lucide-react'
 import { api } from '../services/api'
+import { load, save, remove, KEYS } from '../services/storage'
 
 const FOCUS_PRESETS = [
   { value: 'high_protein', label: 'High Protein', icon: '💪', desc: '10g+ protein/serving' },
@@ -12,16 +13,21 @@ const FOCUS_PRESETS = [
   { value: 'custom', label: 'Custom', icon: '🎯', desc: 'Set exact targets' },
 ]
 
-export default function SnackCartBuilder({ storeId, sessionId, krogerConnected }) {
+export default function SnackCartBuilder({ storeId, sessionId, krogerConnected, restrictions = [], dislikes = [] }) {
   const [focus, setFocus] = useState('high_protein')
   const [budget, setBudget] = useState(20)
   const [snacksPerDay, setSnacksPerDay] = useState(2)
   const [numDays, setNumDays] = useState(7)
   const [custom, setCustom] = useState({ protein_g: '', max_carbs_g: '', max_calories: '', max_fat_g: '', max_sugar_g: '' })
 
-  const [cart, setCart] = useState(null)
+  const [cart, setCart] = useState(() => load(KEYS.snackCart))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  // Keep the last built cart across refreshes — it costs an API call to rebuild
+  useEffect(() => {
+    cart ? save(KEYS.snackCart, cart) : remove(KEYS.snackCart)
+  }, [cart])
 
   async function handleBuild() {
     setLoading(true)
@@ -35,6 +41,8 @@ export default function SnackCartBuilder({ storeId, sessionId, krogerConnected }
         snacks_per_day: Number(snacksPerDay),
         num_days: Number(numDays),
         session_id: krogerConnected ? sessionId : null,
+        restrictions,
+        dislikes,
       }
       if (focus === 'custom') {
         const ct = {}
@@ -64,6 +72,13 @@ export default function SnackCartBuilder({ storeId, sessionId, krogerConnected }
         <p className="text-sm text-gray-500 -mt-2 mb-4">
           Pick a macro goal and we'll assemble a cost-optimized snack cart from current deals.
         </p>
+
+        {restrictions.length > 0 && (
+          <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4">
+            Avoiding <span className="font-semibold text-red-700">{restrictions.join(', ')}</span>
+            {dislikes.length > 0 && <> and skipping {dislikes.join(', ')}</>} — set on the Meal Plan tab.
+          </div>
+        )}
 
         {/* Focus presets */}
         <label className="label">Macro Goal</label>
@@ -181,14 +196,19 @@ function SnackCartResult({ cart }) {
   }
 
   return (
-    <div className="card p-6">
+    <div className="card p-6 print-block">
       <div className="flex items-center justify-between mb-4">
         <h2 className="section-title flex items-center gap-2 mb-0">
           <ShoppingCart size={20} className="text-green-600" /> Your Snack Cart
         </h2>
-        <button onClick={downloadCart} className="btn-secondary flex items-center gap-1.5 text-sm py-1.5">
-          <Download size={14} /> Download
-        </button>
+        <div className="flex gap-2 no-print">
+          <button onClick={downloadCart} className="btn-secondary flex items-center gap-1.5 text-sm py-1.5">
+            <Download size={14} /> Download
+          </button>
+          <button onClick={() => window.print()} className="btn-secondary flex items-center gap-1.5 text-sm py-1.5">
+            <Printer size={14} /> Print
+          </button>
+        </div>
       </div>
 
       {/* Summary */}

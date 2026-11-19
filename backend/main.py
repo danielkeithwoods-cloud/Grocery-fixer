@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import anthropic
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -10,11 +11,11 @@ from pydantic import BaseModel, Field
 
 from services.kroger import (
     search_stores, get_deals, get_snack_deals, get_auth_url, exchange_code_for_token,
-    store_user_token, get_user_session, clear_user_session, _get_app_token,
+    store_user_token, get_user_session, clear_user_session,
 )
-from services.recipe import generate_recipe_plan, generate_snack_cart
+from services.recipe import generate_recipe_plan, generate_snack_cart, swap_meal
 
-app = FastAPI(title="Grocery Recipe Optimizer", version="1.0.0")
+app = FastAPI(title="Grocery Recipe Optimizer", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,6 +26,35 @@ app.add_middleware(
 )
 
 
+def _friendly_error(e: Exception) -> str:
+    """Turn SDK and parsing failures into something a user can act on."""
+    if isinstance(e, anthropic.AuthenticationError):
+        return ("The ANTHROPIC_API_KEY in backend/.env is invalid or expired. "
+                "Check it at console.anthropic.com, then restart the backend.")
+    if isinstance(e, anthropic.PermissionDeniedError):
+        return "This API key doesn't have access to the configured model."
+    if isinstance(e, anthropic.NotFoundError):
+        return (f"Model '{os.getenv('ANTHROPIC_MODEL') or 'claude-opus-5-5'}' was not found. "
+                "Check ANTHROPIC_MODEL in backend/.env.")
+    if isinstance(e, anthropic.RateLimitError):
+        return "Rate limited by the Anthropic API. Wait a few seconds and try again."
+    if isinstance(e, anthropic.BadRequestError):
+        msg = str(e)
+        if "credit balance" in msg.lower() or "billing" in msg.lower():
+            return ("Your Anthropic account is out of credits. Add credits at "
+                    "console.anthropic.com → Plans & Billing, then try again.")
+        return f"The API rejected the request: {getattr(e, 'message', msg)}"
+    if isinstance(e, anthropic.APIConnectionError):
+        return "Couldn't reach the Anthropic API. Check your internet connection."
+    if isinstance(e, anthropic.APIStatusError):
+        if e.status_code >= 500:
+            return "The Anthropic API is temporarily unavailable. Try again in a moment."
+        return f"API error: {getattr(e, 'message', str(e))}"
+    if isinstance(e, ValueError):  # includes json.JSONDecodeError
+        return "The AI returned a malformed response. Try generating again."
+    return str(e)
+
+
 class StoreSearchRequest(BaseModel):
     zip_code: str
     radius_miles: int = Field(default=10, ge=1, le=50)
@@ -33,6 +63,36 @@ class StoreSearchRequest(BaseModel):
 class DealsRequest(BaseModel):
     store_id: str
     limit: int = Field(default=120, ge=10, le=250)
+    session_id: str | None = None
+
+
+class DietaryPrefs(BaseModel):
+    restrictions: list[str] = Field(default_factory=list)
+    dislikes: list[str] = Field(default_factory=list)
+    pantry_items: list[str] = Field(default_factory=list)
+
+
+class RecipePlanRequest(DietaryPrefs):
+    store_id: str
+    num_people: int = Field(default=4, ge=1, le=20)
+    num_days: int = Field(default=7, ge=1, le=14)
+    macro_profile: str = Field(default="balanced")
+    meat_preference: str = Field(default="any")
+    budget_per_person_per_day: float = Field(default=8.0, ge=1.0, le=50.0)
+    meals_per_day: int = Field(default=3, ge=1, le=3)
+    session_id: str | None = None
+
+
+class SwapMealRequest(DietaryPrefs):
+    store_id: str
+    meal_type: str = Field(default="dinner")
+    day: int = Field(default=1, ge=1, le=14)
+    num_people: int = Field(default=4, ge=1, le=20)
+    macro_profile: str = Field(default="balanced")
+    meat_preference: str = Field(default="any")
+    budget_per_meal: float = Field(default=12.0, ge=1.0, le=200.0)
+    previous_meal_name: str = ""
+    avoid_names: list[str] = Field(default_factory=list)
     session_id: str | None = None
 
 
@@ -51,23 +111,19 @@ class SnackCartRequest(BaseModel):
     snacks_per_day: int = Field(default=2, ge=1, le=6)
     num_days: int = Field(default=7, ge=1, le=30)
     custom_targets: CustomMacroTargets | None = None
-    session_id: str | None = None
-
-
-class RecipePlanRequest(BaseModel):
-    store_id: str
-    num_people: int = Field(default=4, ge=1, le=20)
-    num_days: int = Field(default=7, ge=1, le=14)
-    macro_profile: str = Field(default="balanced")
-    meat_preference: str = Field(default="any")
-    budget_per_person_per_day: float = Field(default=8.0, ge=1.0, le=50.0)
-    meals_per_day: int = Field(default=3, ge=1, le=3)
+    restrictions: list[str] = Field(default_factory=list)
+    dislikes: list[str] = Field(default_factory=list)
     session_id: str | None = None
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model": os.getenv("ANTHROPIC_MODEL") or "claude-opus-5-5",
+        "anthropic_configured": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "kroger_configured": bool(os.getenv("KROGER_CLIENT_ID")),
+    }
 
 
 @app.get("/api/test-kroger")
@@ -82,18 +138,16 @@ async def test_kroger():
         resp = await client.post(
             "https://api.kroger.com/v1/connect/oauth2/token",
             headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"},
-            data={"grant_type": "client_credentials"},
+            data={"grant_type": "client_credentials", "scope": "product.compact"},
         )
     return {
         "status": "ok" if resp.status_code == 200 else "error",
         "http_status": resp.status_code,
         "kroger_response": resp.json() if "json" in resp.headers.get("content-type", "") else resp.text,
-        "client_id_length": len(client_id),
-        "secret_length": len(client_secret),
     }
 
 
-# --- Kroger OAuth endpoints ---
+# --- Kroger OAuth ---
 
 @app.get("/api/kroger/login")
 async def kroger_login(session_id: str = Query(...)):
@@ -112,14 +166,13 @@ async def kroger_callback(code: str = Query(None), state: str = Query(None), err
         token_data = await exchange_code_for_token(code)
         store_user_token(state, token_data)
         return RedirectResponse(url=f"http://localhost:5173?kroger_connected=true&session_id={state}")
-    except Exception as e:
-        return RedirectResponse(url=f"http://localhost:5173?kroger_error=token_exchange_failed")
+    except Exception:
+        return RedirectResponse(url="http://localhost:5173?kroger_error=token_exchange_failed")
 
 
 @app.get("/api/kroger/status")
 async def kroger_status(session_id: str = Query(...)):
-    session = get_user_session(session_id)
-    return {"connected": session is not None}
+    return {"connected": get_user_session(session_id) is not None}
 
 
 @app.post("/api/kroger/logout")
@@ -128,7 +181,7 @@ async def kroger_logout(session_id: str = Query(...)):
     return {"status": "logged_out"}
 
 
-# --- Main app endpoints ---
+# --- Main endpoints ---
 
 @app.post("/api/stores")
 async def find_stores(req: StoreSearchRequest):
@@ -143,13 +196,11 @@ async def find_stores(req: StoreSearchRequest):
 async def fetch_deals(req: DealsRequest):
     try:
         deals = await get_deals(req.store_id, req.limit, session_id=req.session_id)
-        on_sale_count = sum(1 for d in deals if d.get("on_sale"))
-        coupon_count = sum(1 for d in deals if d.get("has_coupon"))
         return {
             "deals": deals,
             "total": len(deals),
-            "on_sale_count": on_sale_count,
-            "coupon_count": coupon_count,
+            "on_sale_count": sum(1 for d in deals if d.get("on_sale")),
+            "coupon_count": sum(1 for d in deals if d.get("has_coupon")),
             "demo_mode": not bool(os.getenv("KROGER_CLIENT_ID")),
         }
     except Exception as e:
@@ -159,12 +210,11 @@ async def fetch_deals(req: DealsRequest):
 @app.post("/api/generate-plan")
 async def generate_plan(req: RecipePlanRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured.")
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
 
-    deals = await get_deals(req.store_id, limit=50, session_id=req.session_id)
-
+    deals = await get_deals(req.store_id, limit=120, session_id=req.session_id)
     try:
-        plan = await generate_recipe_plan(
+        return await generate_recipe_plan(
             deals=deals,
             num_people=req.num_people,
             num_days=req.num_days,
@@ -172,32 +222,59 @@ async def generate_plan(req: RecipePlanRequest):
             meat_preference=req.meat_preference,
             budget_per_person_per_day=req.budget_per_person_per_day,
             meals_per_day=req.meals_per_day,
+            restrictions=req.restrictions,
+            dislikes=req.dislikes,
+            pantry_items=req.pantry_items,
         )
-        return plan
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Recipe generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=_friendly_error(e))
+
+
+@app.post("/api/swap-meal")
+async def swap_one_meal(req: SwapMealRequest):
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
+
+    deals = await get_deals(req.store_id, limit=120, session_id=req.session_id)
+    try:
+        return await swap_meal(
+            deals=deals,
+            meal_type=req.meal_type,
+            day=req.day,
+            num_people=req.num_people,
+            macro_profile=req.macro_profile,
+            meat_preference=req.meat_preference,
+            budget_per_meal=req.budget_per_meal,
+            previous_meal_name=req.previous_meal_name,
+            avoid_names=req.avoid_names,
+            restrictions=req.restrictions,
+            dislikes=req.dislikes,
+            pantry_items=req.pantry_items,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=_friendly_error(e))
 
 
 @app.post("/api/snack-cart")
 async def build_snack_cart(req: SnackCartRequest):
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured.")
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set in backend/.env.")
 
     deals = await get_snack_deals(req.store_id, session_id=req.session_id)
-
     custom = None
     if req.macro_focus == "custom" and req.custom_targets:
         custom = req.custom_targets.model_dump(exclude_none=True)
 
     try:
-        cart = await generate_snack_cart(
+        return await generate_snack_cart(
             deals=deals,
             macro_focus=req.macro_focus,
             budget=req.budget,
             snacks_per_day=req.snacks_per_day,
             num_days=req.num_days,
             custom_targets=custom,
+            restrictions=req.restrictions,
+            dislikes=req.dislikes,
         )
-        return cart
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Snack cart generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=_friendly_error(e))

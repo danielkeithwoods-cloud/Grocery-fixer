@@ -34,3 +34,37 @@
     @apply block text-sm font-medium text-gray-700 mb-1;
   }
 }
+
+/* Print: drop chrome and controls, keep the plan and list readable on paper */
+@media print {
+  .no-print,
+  header,
+  footer {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .print-block {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    break-inside: avoid;
+  }
+
+  .print-block + .print-block {
+    margin-top: 1.5rem;
+    break-before: page;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+}

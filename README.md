@@ -11,8 +11,18 @@ Scan live grocery store deals and let Claude AI build an optimized weekly meal p
 - **Digital coupons** — connect your Kroger account (OAuth) to fold your clipped digital coupons into deal pricing
 - **User preferences** — set number of people, days, meals per day, macro profile, and meat preference (chicken, beef, pork, fish, vegetarian, vegan)
 - **Budget control** — specify a budget per person per day for meals, or a total budget for snack carts
-- **Interactive lists** — consolidated grocery list and snack cart, grouped, with check-off and download-to-text
+- **Allergies, dislikes & pantry** — mark allergens to avoid entirely, ingredients you dislike, and staples you already own (kept off the shopping list and out of the cost total)
+- **Swap a single meal** — don't like one dinner? Regenerate just that meal instead of the whole plan
+- **Shopping mode** — an in-store view with large tap targets, a running "in cart" vs "still to get" total, and checked items sorted to the bottom of each aisle
+- **Nothing is lost on refresh** — plans, snack carts, preferences, check-offs, and recent stores persist locally
+- **Interactive lists** — grouped grocery list and snack cart with check-off, copy, download, and print
 - **Demo mode** — runs with realistic sample data (including snacks) if no API keys are configured
+
+### Notes on accuracy
+
+Meal plans, macros, and prices are AI-generated estimates. Always check product labels yourself,
+especially for allergies. Kroger's product API does not return nutrition data, so per-serving
+macros are estimated by the model rather than read from a label.
 
 ## Setup
 
@@ -27,8 +37,12 @@ cp backend/.env.example backend/.env
 | Variable | Required | Where to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes (for recipe generation) | console.anthropic.com |
+| `ANTHROPIC_MODEL` | No — defaults to `claude-opus-5-5` | Set to `claude-sonnet-5-5` for roughly half the cost per plan |
 | `KROGER_CLIENT_ID` | No (demo data used without it) | developer.kroger.com |
 | `KROGER_CLIENT_SECRET` | No (demo data used without it) | developer.kroger.com |
+
+To enable digital-coupon pricing, also add `http://localhost:8000/api/kroger/callback`
+as a Redirect URI on your Kroger developer application.
 
 ### 2. Backend
 
