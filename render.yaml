@@ -21,9 +21,11 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # Optional — claude-sonnet-5-5 costs roughly half as much per plan.
+      # Sonnet 5.5 is half the price of Opus 5.5 on both input and output
+      # ($2/$10 vs $4/$20 per million tokens) and handles meal planning well.
+      # Switch to claude-opus-5-5 if you want the strongest planning at 2x cost.
       - key: ANTHROPIC_MODEL
-        value: claude-opus-5-5
+        value: claude-sonnet-5-5
 
       # Optional — without these the app runs on built-in demo deals.
       - key: KROGER_CLIENT_ID

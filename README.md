@@ -39,7 +39,7 @@ cp backend/.env.example backend/.env
 | Variable | Required | Where to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes (for recipe generation) | console.anthropic.com |
-| `ANTHROPIC_MODEL` | No — defaults to `claude-opus-5-5` | Set to `claude-sonnet-5-5` for roughly half the cost per plan |
+| `ANTHROPIC_MODEL` | No | Defaults to `claude-opus-5-5` locally. Deployments via `render.yaml` use `claude-sonnet-5-5`, which is half the price. Set it explicitly to pin either one. |
 | `KROGER_CLIENT_ID` | No (demo data used without it) | developer.kroger.com |
 | `KROGER_CLIENT_SECRET` | No (demo data used without it) | developer.kroger.com |
 

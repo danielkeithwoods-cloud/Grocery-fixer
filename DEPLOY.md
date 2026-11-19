@@ -86,7 +86,7 @@ https://YOUR-SERVICE.onrender.com/health
 ```json
 {
   "status": "ok",
-  "model": "claude-opus-5-5",
+  "model": "claude-sonnet-5-5",
   "anthropic_configured": true,
   "kroger_configured": true,
   "access_protected": true,
@@ -112,7 +112,23 @@ you're standing in an aisle. If you use this regularly in a store, the $7/mo
 Starter plan keeps it always-on and is the single biggest quality-of-life
 difference. Everything else works identically on free.
 
-To cut the Anthropic cost roughly in half, set `ANTHROPIC_MODEL=claude-sonnet-5-5`.
+### Model cost
+
+The blueprint deploys with `ANTHROPIC_MODEL=claude-sonnet-5-5`, which is **half the
+price of Opus 5.5** on both input and output:
+
+| Model | Input / 1M | Output / 1M |
+|---|---|---|
+| `claude-sonnet-5-5` *(deployed default)* | $2.00 | $10.00 |
+| `claude-opus-5-5` | $4.00 | $20.00 |
+
+Sonnet handles meal planning well. If you find plans aren't as sharp as you'd like,
+switch `ANTHROPIC_MODEL` to `claude-opus-5-5` in Render → Environment and save — it
+redeploys automatically, no code change needed.
+
+Prompt caching applies either way: the deals list is cached between the meal plan,
+each meal swap, and regenerations for the same store, so repeat calls cost far less
+than the first.
 
 ---
 
